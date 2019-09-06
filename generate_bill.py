@@ -1,14 +1,26 @@
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from smtplib import SMTP_SSL
+from pathlib import Path
+from loguru import logger
 import jinja2
 import click
 import pendulum
 import pdfkit
 import os
 import csv
-from loguru import logger
 
 TEMPLATE_DIR = "templates"
 TEMPLATE_FILE = "bill.html"
 BILLS_DIR = "bills"
+
+MAIL_SENDER = "SJB <secretariat@sjb35.com>"
+MAIL_SUBJECT = "Facture 2019/2020"
+MAIL_SMTP_HOST = "smtp.ionos.fr"
+MAIL_SMTP_PORT = 465
+MAIL_SMTP_LOGIN = "president@sjb35.com"
 
 
 @click.command()
@@ -37,14 +49,14 @@ def generate_bill(firstname: str, lastname: str, amount: float, csv: str):
     if csv:
         generate_bill_from_csv(csv)
     elif firstname and lastname and amount:
-        generate_single_bill(firstname, lastname, amount)
+        pdf_file = generate_single_bill(firstname, lastname, amount)
     else:
         click.echo(
             f"Required arguments are missing. Please run the commande again with the --help option"
         )
 
 
-def generate_single_bill(firstname: str, lastname: str, amount: float):
+def generate_single_bill(firstname: str, lastname: str, amount: float) -> str:
     template_loader = jinja2.FileSystemLoader(searchpath=f"./{TEMPLATE_DIR}")
     template_env = jinja2.Environment(loader=template_loader)
     template = template_env.get_template(TEMPLATE_FILE)
@@ -74,6 +86,8 @@ def generate_single_bill(firstname: str, lastname: str, amount: float):
     logger.info(f"Remove {source_html_file}")
     os.unlink(source_html_file)
 
+    return target_pdf_file
+
 
 def generate_bill_from_csv(csv_file: str):
     with open(csv_file, "r") as thefile:
@@ -82,5 +96,56 @@ def generate_bill_from_csv(csv_file: str):
             generate_single_bill(row[1], row[0], row[2])
 
 
+def send_mail(name: str, email: str, pdf_filepath: str, smtp_password: str):
+    body = f"""
+    Bonjour {name.capitalize()},
+
+    Veuillez trouver ci-joint la facture correspondant à votre adhésion au club du <b>SJB pour la saison 2019/2020</b>.
+
+    Cordialement,
+    Fabrice pour le SJB
+    """
+
+    # Create a multipart message and set headers
+    message = MIMEMultipart()
+    message.attach(MIMEText(body, "plain"))
+    message["From"] = MAIL_SENDER
+    message["To"] = email
+    message["Subject"] = MAIL_SUBJECT
+    message["Cc"] = "fabio@fabiolab.fr"
+    message["reply-to"] = MAIL_SENDER
+
+    # Open PDF file in binary mode
+    with open(pdf_filepath, "rb") as attachment:
+        # Add file as application/octet-stream
+        # Email client can usually download this automatically as attachment
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(attachment.read())
+
+    # Encode file in ASCII characters to send by email
+    encoders.encode_base64(part)
+
+    # Add header as key/value pair to attachment part
+    part.add_header(
+        "Content-Disposition", f"attachment; filename= {Path(pdf_filepath).name}"
+    )
+
+    # Add attachment to message and convert message to string
+    message.attach(part)
+
+    text = message.as_string()
+
+    # Log in to server using secure context and send email
+    with SMTP_SSL(MAIL_SMTP_HOST, MAIL_SMTP_PORT) as server:
+        server.login(MAIL_SMTP_LOGIN, smtp_password)
+        server.sendmail(MAIL_SENDER, email, text)
+        logger.info(f"Successfully sent email to {email}")
+
+
 if __name__ == "__main__":
     generate_bill()
+
+    # password = input("Type your password and press enter:")
+    # send_mail(
+    #     "Fabrice", "fabio@fabiolab.fr", "bills/MORIN_Guillaume_Facture.pdf", password
+    # )
