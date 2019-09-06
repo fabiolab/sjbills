@@ -1,6 +1,6 @@
 .idea/
 .pytest_cache/
-.templates/images
+templates/images
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
