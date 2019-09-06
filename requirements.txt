@@ -1,0 +1,5 @@
+pdfkit==0.6.1
+loguru==0.2.5
+Jinja2==2.10
+Click==7.0
+pendulum==2.0.5
