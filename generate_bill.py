@@ -5,6 +5,7 @@ from email.mime.text import MIMEText
 from smtplib import SMTP_SSL
 from pathlib import Path
 from loguru import logger
+import unicodedata
 import jinja2
 import click
 import pendulum
@@ -40,16 +41,32 @@ MAIL_SMTP_LOGIN = "president@sjb35.com"
     type=click.FLOAT,
 )
 @click.option(
-    "--csv",
+    "--email", help="Email to send the mail", required=False, type=click.STRING
+)
+@click.option(
+    "--csv_file",
     help="CSV File : lastname, firstname, amount",
     required=False,
     type=click.Path(exists=True),
 )
-def generate_bill(firstname: str, lastname: str, amount: float, csv: str):
-    if csv:
-        generate_bill_from_csv(csv)
+@click.option("--sendmail", help="Send the bill by mail", is_flag=True)
+def generate_bill(
+    firstname: str,
+    lastname: str,
+    amount: float,
+    csv_file: str,
+    sendmail: bool,
+    email: str,
+):
+    password = None
+    if sendmail:
+        password = click.prompt("Please enter the smtp password", hide_input=True)
+    if csv_file:
+        generate_bill_from_csv(csv_file, sendmail, password)
     elif firstname and lastname and amount:
         pdf_file = generate_single_bill(firstname, lastname, amount)
+        if sendmail:
+            send_mail(firstname, email, pdf_file, password)
     else:
         click.echo(
             f"Required arguments are missing. Please run the commande again with the --help option"
@@ -69,12 +86,14 @@ def generate_single_bill(firstname: str, lastname: str, amount: float) -> str:
         dt=now.format("DD/MM/YYYY"),
     )
 
-    source_html_file = (
+    source_html_file = strip_accent(
         f"{TEMPLATE_DIR}/{lastname.upper()}_{firstname.capitalize()}_Facture.html"
     )
-    target_pdf_file = (
+
+    target_pdf_file = strip_accent(
         f"{BILLS_DIR}/{lastname.upper()}_{firstname.capitalize()}_Facture.pdf"
     )
+
     logger.info(f"Generate {source_html_file} from {TEMPLATE_DIR}/{TEMPLATE_FILE}")
     html_file = open(source_html_file, "w")
     html_file.write(generated_html)
@@ -89,30 +108,49 @@ def generate_single_bill(firstname: str, lastname: str, amount: float) -> str:
     return target_pdf_file
 
 
-def generate_bill_from_csv(csv_file: str):
+def generate_bill_from_csv(csv_file: str, sendmail: bool, passwd: str):
     with open(csv_file, "r") as thefile:
         csv_reader = csv.reader(thefile, delimiter=";")
         for row in csv_reader:
-            generate_single_bill(row[1], row[0], row[2])
+            try:
+                firstname = row[1].strip()
+                lastname = row[0].strip()
+                amount = row[2].strip()
+            except IndexError:
+                logger.error(
+                    f"A field is missing in the current row {row}. The line is ignored."
+                )
+            else:
+                pdf = generate_single_bill(firstname, lastname, amount)
+                if sendmail:
+                    try:
+                        send_mail(firstname, row[3], pdf, passwd)
+                    except IndexError:
+                        logger.error(
+                            f"No email specified in the row {row}. Email not sent."
+                        )
 
 
 def send_mail(name: str, email: str, pdf_filepath: str, smtp_password: str):
     body = f"""
-    Bonjour {name.capitalize()},
-
-    Veuillez trouver ci-joint la facture correspondant à votre adhésion au club du <b>SJB pour la saison 2019/2020</b>.
-
-    Cordialement,
-    Fabrice pour le SJB
+    <p>
+        Bonjour {name.capitalize()},
+    </p>
+    <p>
+        Veuillez trouver ci-joint la facture correspondant à votre adhésion au club du <b>SJB pour la saison 2019/2020</b>.
+    </p>
+    <p>Cordialement,
+        <br/>Fabrice pour le SJB
+    </p>
     """
 
     # Create a multipart message and set headers
     message = MIMEMultipart()
-    message.attach(MIMEText(body, "plain"))
+    message.attach(MIMEText(body, "html"))
     message["From"] = MAIL_SENDER
     message["To"] = email
     message["Subject"] = MAIL_SUBJECT
-    message["Cc"] = "fabio@fabiolab.fr"
+    message["Cc"] = MAIL_SENDER
     message["reply-to"] = MAIL_SENDER
 
     # Open PDF file in binary mode
@@ -125,10 +163,10 @@ def send_mail(name: str, email: str, pdf_filepath: str, smtp_password: str):
     # Encode file in ASCII characters to send by email
     encoders.encode_base64(part)
 
+    filename = Path(pdf_filepath).name
+    logger.info(f"Add {filename} as an attachment")
     # Add header as key/value pair to attachment part
-    part.add_header(
-        "Content-Disposition", f"attachment; filename= {Path(pdf_filepath).name}"
-    )
+    part.add_header("Content-Disposition", f"attachment; filename= {filename}")
 
     # Add attachment to message and convert message to string
     message.attach(part)
@@ -142,10 +180,11 @@ def send_mail(name: str, email: str, pdf_filepath: str, smtp_password: str):
         logger.info(f"Successfully sent email to {email}")
 
 
+def strip_accent(text: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
+    )
+
+
 if __name__ == "__main__":
     generate_bill()
-
-    # password = input("Type your password and press enter:")
-    # send_mail(
-    #     "Fabrice", "fabio@fabiolab.fr", "bills/MORIN_Guillaume_Facture.pdf", password
-    # )
