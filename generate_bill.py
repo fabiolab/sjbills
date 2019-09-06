@@ -29,7 +29,7 @@ BILLS_DIR = "bills"
 )
 @click.option(
     "--csv",
-    help="CSV File : firstname, lastname, amount",
+    help="CSV File : lastname, firstname, amount",
     required=False,
     type=click.Path(exists=True),
 )
@@ -79,7 +79,7 @@ def generate_bill_from_csv(csv_file: str):
     with open(csv_file, "r") as thefile:
         csv_reader = csv.reader(thefile, delimiter=";")
         for row in csv_reader:
-            generate_single_bill(row[0], row[1], row[2])
+            generate_single_bill(row[1], row[0], row[2])
 
 
 if __name__ == "__main__":
