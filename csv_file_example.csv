@@ -1,3 +1,2 @@
-Depaulis;Fabrice;100;fabio@fabiolab.fr
-Woo;John;45;fabypubs@yahoo.fr
-Couture;René;git 784;fabio@fabiolab.fr
+bill_lastname;bill_firstname;amount;adherent_lastname;adherent_fistname;email
+"Woo";"John";100.10;"Depaulis";"Fabrice";"fabio@fabiolab.fr"

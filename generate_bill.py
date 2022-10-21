@@ -13,15 +13,14 @@ import pdfkit
 import os
 import csv
 
+from conf import settings
+
 TEMPLATE_DIR = "templates"
 TEMPLATE_FILE = "bill.html"
 BILLS_DIR = "bills"
 
-MAIL_SENDER = "SJB <secretariat@sjb35.com>"
-MAIL_SUBJECT = "Facture 2019/2020"
-MAIL_SMTP_HOST = "smtp.ionos.fr"
-MAIL_SMTP_PORT = 465
-MAIL_SMTP_LOGIN = "president@sjb35.com"
+SEASON = "2022/2023"
+MAIL_SUBJECT = f"Facture {SEASON}"
 
 
 @click.command()
@@ -33,6 +32,18 @@ MAIL_SMTP_LOGIN = "president@sjb35.com"
 )
 @click.option(
     "--lastname", help="LastName for bill (ex: Woo)", required=False, type=click.STRING
+)
+@click.option(
+    "--adherent_firstname",
+    help="FirstName of the adherent (if different from bill)",
+    required=False,
+    type=click.STRING,
+)
+@click.option(
+    "--adherent_lastname",
+    help="LastName of the adherent (if different from bill)",
+    required=False,
+    type=click.STRING,
 )
 @click.option(
     "--amount",
@@ -53,6 +64,8 @@ MAIL_SMTP_LOGIN = "president@sjb35.com"
 def generate_bill(
     firstname: str,
     lastname: str,
+    adherent_firstname: str,
+    adherent_lastname: str,
     amount: float,
     csv_file: str,
     sendmail: bool,
@@ -64,7 +77,9 @@ def generate_bill(
     if csv_file:
         generate_bill_from_csv(csv_file, sendmail, password)
     elif firstname and lastname and amount:
-        pdf_file = generate_single_bill(firstname, lastname, amount)
+        pdf_file = generate_single_bill(
+            firstname, lastname, amount, adherent_firstname, adherent_lastname
+        )
         if sendmail:
             send_mail(firstname, email, pdf_file, password)
     else:
@@ -73,7 +88,18 @@ def generate_bill(
         )
 
 
-def generate_single_bill(firstname: str, lastname: str, amount: float) -> str:
+def generate_single_bill(
+    bill_firstname: str,
+    bill_lastname: str,
+    amount: float,
+    adherent_firstname: str = None,
+    adherent_lastname: str = None,
+) -> str:
+
+    if not adherent_firstname:
+        adherent_firstname = bill_firstname
+        adherent_lastname = bill_lastname
+
     template_loader = jinja2.FileSystemLoader(searchpath=f"./{TEMPLATE_DIR}")
     template_env = jinja2.Environment(loader=template_loader)
     template = template_env.get_template(TEMPLATE_FILE)
@@ -81,17 +107,19 @@ def generate_single_bill(firstname: str, lastname: str, amount: float) -> str:
     now = pendulum.now("Europe/Paris")
 
     generated_html = template.render(
-        name=f"{firstname.capitalize()} {lastname.upper()}",
+        name=f"{bill_firstname.capitalize()} {bill_lastname.upper()}",
         amount=amount,
+        adherent=f"{adherent_firstname.capitalize()} {adherent_lastname.upper()}",
+        season=SEASON,
         dt=now.format("DD/MM/YYYY"),
     )
 
     source_html_file = strip_accent(
-        f"{TEMPLATE_DIR}/{lastname.upper()}_{firstname.capitalize()}_Facture.html"
+        f"{TEMPLATE_DIR}/{adherent_lastname.upper()}_{adherent_firstname.capitalize()}_Facture.html"
     )
 
     target_pdf_file = strip_accent(
-        f"{BILLS_DIR}/{lastname.upper()}_{firstname.capitalize()}_Facture.pdf"
+        f"{BILLS_DIR}/{adherent_lastname.upper()}_{adherent_firstname.capitalize()}_Facture.pdf"
     )
 
     logger.info(f"Generate {source_html_file} from {TEMPLATE_DIR}/{TEMPLATE_FILE}")
@@ -113,18 +141,26 @@ def generate_bill_from_csv(csv_file: str, sendmail: bool, passwd: str):
         csv_reader = csv.reader(thefile, delimiter=";")
         for row in csv_reader:
             try:
-                firstname = row[1].strip()
-                lastname = row[0].strip()
+                bill_firstname = row[1].strip()
+                bill_lastname = row[0].strip()
                 amount = row[2].strip()
+                adherent_lastname = row[3].strip()
+                adherent_firstname = row[4].strip()
             except IndexError:
                 logger.error(
                     f"A field is missing in the current row {row}. The line is ignored."
                 )
             else:
-                pdf = generate_single_bill(firstname, lastname, amount)
+                pdf = generate_single_bill(
+                    bill_firstname,
+                    bill_lastname,
+                    float(amount),
+                    adherent_firstname,
+                    adherent_lastname,
+                )
                 if sendmail:
                     try:
-                        send_mail(firstname, row[3], pdf, passwd)
+                        send_mail(bill_firstname, row[5], pdf, passwd)
                     except IndexError:
                         logger.error(
                             f"No email specified in the row {row}. Email not sent."
@@ -137,7 +173,7 @@ def send_mail(name: str, email: str, pdf_filepath: str, smtp_password: str):
         Bonjour {name.capitalize()},
     </p>
     <p>
-        Veuillez trouver ci-joint la facture correspondant à votre adhésion au club du <b>SJB pour la saison 2019/2020</b>.
+        Veuillez trouver ci-joint la facture correspondant à votre adhésion au club du <b>SJB pour la saison {SEASON}</b>.
     </p>
     <p>Cordialement,
         <br/>Fabrice pour le SJB
@@ -147,11 +183,11 @@ def send_mail(name: str, email: str, pdf_filepath: str, smtp_password: str):
     # Create a multipart message and set headers
     message = MIMEMultipart()
     message.attach(MIMEText(body, "html"))
-    message["From"] = MAIL_SENDER
+    message["From"] = settings.mail_sender
     message["To"] = email
-    message["Subject"] = MAIL_SUBJECT
-    message["Cc"] = MAIL_SENDER
-    message["reply-to"] = MAIL_SENDER
+    message["Subject"] = settings.mail_subject
+    message["cc"] = settings.mail_cc
+    message["reply-to"] = settings.mail_sender
 
     # Open PDF file in binary mode
     with open(pdf_filepath, "rb") as attachment:
@@ -174,9 +210,9 @@ def send_mail(name: str, email: str, pdf_filepath: str, smtp_password: str):
     text = message.as_string()
 
     # Log in to server using secure context and send email
-    with SMTP_SSL(MAIL_SMTP_HOST, MAIL_SMTP_PORT) as server:
-        server.login(MAIL_SMTP_LOGIN, smtp_password)
-        server.sendmail(MAIL_SENDER, email, text)
+    with SMTP_SSL(settings.mail_smtp_host, settings.mail_smtp_port) as server:
+        server.login(settings.mail_smtp_login, smtp_password)
+        server.sendmail(settings.mail_sender, [email, settings.mail_cc], text)
         logger.info(f"Successfully sent email to {email}")
 
 
